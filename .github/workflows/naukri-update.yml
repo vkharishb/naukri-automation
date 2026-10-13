@@ -1,50 +1,23 @@
-import os, random, time
-from playwright.sync_api import sync_playwright
-
-TEST = os.environ.get("TEST_MODE")
-if not TEST:
-    time.sleep(random.randint(0, 300))
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(channel="chrome", headless=False, slow_mo=300 if TEST else 0)
-    ctx = browser.new_context(viewport={"width": 1366, "height": 900})
-    page = ctx.new_page()
-    try:
-        # 1. Login
-        page.goto("https://www.naukri.com/nlogin/login", wait_until="domcontentloaded")
-        page.locator("input[type=text], input[type=email]").first.fill(os.environ["NAUKRI_USER"])
-        page.locator("input[type=password]").first.fill(os.environ["NAUKRI_PASS"])
-        page.get_by_role("button", name="Login").first.click()
-        page.wait_for_url("**/mnjuser/**", timeout=30000)
-
-        # 2. Open profile
-        page.goto("https://www.naukri.com/mnjuser/profile", wait_until="domcontentloaded")
-        page.wait_for_timeout(4000)
-
-        # 3. Resume headline card heading (.last = main card, not the sidebar link)
-        heading = page.get_by_text("Resume headline", exact=True).last
-        heading.scroll_into_view_if_needed()
-        page.screenshot(path="3_profile.png")
-
-        # 4. Click the pencil icon right next to the heading
-        pencil = heading.locator("xpath=following::*[contains(@class,'edit')][1]")
-        if pencil.count() > 0:
-            pencil.click()
-        else:
-            # fallback: click just to the right of the heading text
-            box = heading.bounding_box()
-            page.mouse.click(box["x"] + box["width"] + 20, box["y"] + box["height"] / 2)
-        page.wait_for_timeout(1500)
-        page.screenshot(path="4_edit_open.png")
-
-        # 5. Save
-        page.get_by_role("button", name="Save").click()
-        page.wait_for_timeout(3000)
-        page.screenshot(path="5_saved.png")
-        print("Profile saved")
-    except Exception:
-        page.screenshot(path="error.png")
-        print("URL:", page.url)
-        raise
-    finally:
-        browser.close()
+name: Naukri Update
+on:
+  workflow_dispatch:
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python naukri_update.py
+        env:
+          NAUKRI_USER: ${{ secrets.NAUKRI_USER }}
+          NAUKRI_PASS: ${{ secrets.NAUKRI_PASS }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: "*.png"
