@@ -1,42 +1,50 @@
 import os, random, time
 from playwright.sync_api import sync_playwright
 
-if not os.environ.get("TEST_MODE"):
+TEST = os.environ.get("TEST_MODE")
+if not TEST:
     time.sleep(random.randint(0, 300))
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=not os.environ.get("TEST_MODE"))
-    ctx = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
-        viewport={"width": 1366, "height": 900},
-    )
+    browser = p.chromium.launch(channel="chrome", headless=False, slow_mo=300 if TEST else 0)
+    ctx = browser.new_context(viewport={"width": 1366, "height": 900})
     page = ctx.new_page()
     try:
-        page.goto("https://www.naukri.com/nlogin/login")
-        page.screenshot(path="1_login_page.png")
+        # 1. Login
+        page.goto("https://www.naukri.com/nlogin/login", wait_until="domcontentloaded")
+        page.wait_for_selector("#usernameField", state="visible", timeout=30000)
         page.fill("#usernameField", os.environ["NAUKRI_USER"])
         page.fill("#passwordField", os.environ["NAUKRI_PASS"])
         page.click("button[type=submit]")
         page.wait_for_url("**/mnjuser/**", timeout=30000)
-        page.screenshot(path="2_after_login.png")
+        # 2. Open profile
+        page.goto("https://www.naukri.com/mnjuser/profile", wait_until="domcontentloaded")
+        page.wait_for_timeout(4000)
 
-        page.goto("https://www.naukri.com/mnjuser/profile")
-        page.wait_for_load_state("networkidle")
+        # 3. Resume headline card heading (.last = main card, not the sidebar link)
+        heading = page.get_by_text("Resume headline", exact=True).last
+        heading.scroll_into_view_if_needed()
         page.screenshot(path="3_profile.png")
 
-        # Edit icon next to Resume headline (selector is a guess; check screenshots if it fails)
-        section = page.get_by_text("Resume headline", exact=False).first
-        section.scroll_into_view_if_needed()
-        section.locator("xpath=ancestor::div[1]").locator("[class*=edit]").first.click()
+        # 4. Click the pencil icon right next to the heading
+        pencil = heading.locator("xpath=following::*[contains(@class,'edit')][1]")
+        if pencil.count() > 0:
+            pencil.click()
+        else:
+            # fallback: click just to the right of the heading text
+            box = heading.bounding_box()
+            page.mouse.click(box["x"] + box["width"] + 20, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(1500)
         page.screenshot(path="4_edit_open.png")
 
+        # 5. Save
         page.get_by_role("button", name="Save").click()
         page.wait_for_timeout(3000)
         page.screenshot(path="5_saved.png")
         print("Profile saved")
     except Exception:
         page.screenshot(path="error.png")
-        print(page.url)
+        print("URL:", page.url)
         raise
     finally:
         browser.close()
